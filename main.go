@@ -47,6 +47,7 @@ const (
 	reserved
 )
 
+// Angle Flags
 const (
 	IsDifferentAudios = 1 << (iota + 7)
 	IsSeamlessAngleChange
@@ -84,8 +85,9 @@ type PlayItem struct {
 	len              uint16
 	clpi             CLPI
 	flags            uint16 // multiangle/connection condition
-	inTime           int32
-	outTime          int32
+	STCID            byte
+	inTime           int
+	outTime          int
 	UOMask           uint64
 	RandomAccessFlag byte
 	stillMode        byte
@@ -280,9 +282,97 @@ func (pi *PlayItem) Parse(file io.Reader) error {
 	if str[5:9] != "M2TS" {
 		fmt.Fprintf(os.Stderr, "warning: this playlist may be faulty it has a play item that is '%s' not 'M2TS'", str[4:8])
 	}
-	pi.clpi.file = str[:5]
-	pi.clpi.Codec = str[5:9]
+	pi.clpi.ClipFile = str[:5]
+	pi.clpi.ClipID = str[5:9]
 
+	pi.flags, err = readUInt16(file, buf[:])
+	if err != nil {
+		return err
+	}
+	n, err = file.Read(buf[:1])
+	if err != nil || n != 1 {
+		return err
+	}
+	pi.STCID = buf[0]
+
+	pi.inTime, err = readInt32(file, buf[:])
+	if err != nil {
+		return err
+	}
+
+	pi.outTime, err = readInt32(file, buf[:])
+	if err != nil {
+		return err
+	}
+
+	pi.UOMask, err = readUInt64(file, buf[:])
+	if err != nil {
+		return err
+	}
+
+	n, err = file.Read(buf[:1])
+	if err != nil || n != 1 {
+		return err
+	}
+	pi.RandomAccessFlag = buf[0]
+
+	n, err = file.Read(buf[:1])
+	if err != nil || n != 1 {
+		return err
+	}
+	pi.stillMode = buf[0]
+
+	pi.stillTime, err = readUInt16(file, buf[:])
+	if err != nil {
+		return err
+	}
+
+	if pi.flags&1 == 1 {
+		n, err = file.Read(buf[:1])
+		if err != nil || n != 1 {
+			return err
+		}
+		pi.angleCount = buf[0]
+
+		n, err = file.Read(buf[:1])
+		if err != nil || n != 1 {
+			return err
+		}
+		pi.angleFlags = buf[0]
+
+		for i := 0; i < int(pi.angleCount); i++ {
+			var angle CLPI
+			err = angle.Parse(file)
+			if err != nil {
+				return err
+			}
+			pi.angles = append(pi.angles, angle)
+		}
+	}
+
+	return nil
+}
+
+// Parse reads angle data from an io.ReadSeeker
+func (clpi *CLPI) Parse(file io.Reader) error {
+	var (
+		buf [10]byte
+		n   int
+		err error
+	)
+	n, err = file.Read(buf[:9])
+	if err != nil || n != 9 {
+		return err
+	}
+	str := string(buf[:9])
+	clpi.ClipFile = str[:5]
+	clpi.ClipID = str[5:9]
+
+	n, err = file.Read(buf[:1])
+	if err != nil || n != 1 {
+		return err
+	}
+	clpi.STCID = buf[0]
 	return nil
 }
 
