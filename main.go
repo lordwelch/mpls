@@ -12,53 +12,143 @@ import (
 
 // User Operation mask table
 const (
-	ChapterSearchMask = 1 << iota
-	TimeSearchMask
-	SkipToNextPointMask
-	SkipBackToPreviousPointMask
-	ForwardPlayMask
-	BackwardPlayMask
-	PlayMask
-	StopMask
-	PauseOnMask
-	PauseOffMask
-	StillOffMask
-	ResumeMask
-	MoveUpSelectedButtonMask
-	MoveDownSelectedButtonMask
-	MoveLeftSelectedButtonMask
-	MoveRightSelectedButtonMask
-	SelectButtonMask
-	ActivateAndActivateMask
-	SelectAndActivateMask
-	AudioChangeMask
-	PgTextstChangeMask
-	AngleChangeMask
-	PopupOnMask
-	PopupOffMask
-	SelectMenuLanguageMask
+	UOChapterSearchMask = 1 << iota
+	UOTimeSearchMask
+	UOSkipToNextPointMask
+	UOSkipBackToPreviousPointMask
+	UOForwardPlayMask
+	UOBackwardPlayMask
+	UOPlayMask
+	UOStopMask
+	UOPauseOnMask
+	UOPauseOffMask
+	UOStillOffMask
+	UOResumeMask
+	UOMoveUpSelectedButtonMask
+	UOMoveDownSelectedButtonMask
+	UOMoveLeftSelectedButtonMask
+	UOMoveRightSelectedButtonMask
+	UOSelectButtonMask
+	UOActivateAndActivateMask
+	UOSelectAndActivateMask
+	UOAudioChangeMask
+	UOPgTextstChangeMask
+	UOAngleChangeMask
+	UOPopupOnMask
+	UOPopupOffMask
+	UOSelectMenuLanguageMask
 )
 
 // Playlist Flags
 const (
-	PlaylistRandomAccess = 1 << iota
-	AudioMixApp
-	LosslessMayBypassMixer
-	reserved
+	PFPlaylistRandomAccess = 1 << iota
+	PFAudioMixApp
+	PFLosslessMayBypassMixer
+	PFreserved
 )
 
 // Angle Flags
 const (
-	IsDifferentAudios = 1 << (iota + 7)
-	IsSeamlessAngleChange
+	AFIsDifferentAudios = 1 << (iota + 7)
+	AFIsSeamlessAngleChange
 )
+
+// VideoType
+const (
+	VTMPEG1Video = 0x01
+	VTMPEG2Video = 0x02
+	VTVC1        = 0xea
+	VTH264       = 0x1b
+)
+
+// AudioType
+const (
+	ATMPEG1Audio  = 0x03
+	ATMPEG2Audio  = 0x04
+	ATLPCM        = 0x80
+	ATAC3         = 0x81
+	ATDTS         = 0x82
+	ATTRUEHD      = 0x83
+	ATAC3Plus     = 0x84
+	ATDTSHD       = 0x85
+	ATDTSHDMaster = 0x86
+)
+
+// OtherType
+const (
+	PresentationGraphics = 0x90
+	InteractiveGraphics  = 0x91
+	TextSubtitle         = 0x92
+)
+
+// VideoFormat
+const (
+	VFReserved = iota
+	VF480I
+	VF576I
+	VF480P
+	VF1080I
+	VF720P
+	VF1080P
+	VF576P
+)
+
+// FrameRate
+const (
+	FRReserved = iota
+	FR23976    // 23.976
+	FR24       // 24
+	FR25       // 25
+	FR2997     // 29.97
+	FR50       // 50
+	FR5994     // 59.94
+)
+
+// AspectRatio
+const (
+	ARReserved = 0
+	AR43       = 2 //4:3
+	AR169      = 3 //16:9
+)
+
+// AudioPresentation
+const (
+	APReserved = 0
+	APMono     = 1
+	APDualMono = 2
+	APStereo   = 3
+	APMulti    = 6
+	APCombo    = 12
+)
+
+// SampleRate
+const (
+	SRReserved = 0
+	SR48       = 1
+	SR96       = 4
+	SR192      = 5
+	SR48192    = 12 // 48/192
+	SR4896     = 14 // 48/96
+)
+
+// CharacterCode
+const (
+	ReservedCharacterCode = iota
+	UTF8
+	UTF16
+	ShiftJIS // Japanese
+	KSC5601  // Korean
+	GB18030  // Chinese
+	GB2312   // Chinese
+	BIG5     // Chinese
+) // Chinese
 
 // MPLS is a struct representing an MPLS file
 type MPLS struct {
 	Header             string
-	playlistStart      int
-	playlistMarkStart  int
-	extensionDataStart int
+	PlaylistStart      int
+	PlaylistMarkStart  int
+	ExtensionDataStart int
 	AppInfoPlaylist    AppInfoPlaylist
 	Playlist           Playlist
 }
@@ -74,30 +164,30 @@ type AppInfoPlaylist struct {
 
 // Playlist sucks
 type Playlist struct {
-	len           int
-	playItemCount uint16
-	subPathCount  uint16
-	playItems     []PlayItem
+	Len           int
+	PlayItemCount uint16
+	SubPathCount  uint16
+	PlayItems     []PlayItem
 }
 
 // PlayItem contains information about a an item in the playlist
 type PlayItem struct {
-	len              uint16
-	clpi             CLPI
-	flags            uint16 // multiangle/connection condition
-	STCID            byte
-	inTime           int
-	outTime          int
+	Len              uint16
+	Flags            uint16 // multiangle/connection condition
+	StillTime        uint16
+	Clpi             CLPI
+	InTime           int
+	OutTime          int
 	UOMask           uint64
+	StillMode        byte
+	STCID            byte
 	RandomAccessFlag byte
-	stillMode        byte
-	stillTime        uint16
-	angleCount       byte
-	angleFlags       byte
-	angles           []CLPI
+	AngleCount       byte
+	AngleFlags       byte
+	Angles           []CLPI
 }
 
-// CLPI contains the filename and the codec ID
+// CLPI contains the fiLename and the codec ID
 type CLPI struct {
 	ClipFile string
 	ClipID   string // M2TS
@@ -111,13 +201,13 @@ func main() {
 }
 
 // Parse parses an MPLS file into an MPLS struct
-func Parse(filename string) (Mpls MPLS, err error) {
+func Parse(fiLename string) (Mpls MPLS, err error) {
 	var (
 		file *bytes.Reader
 		f    []byte
 	)
 
-	f, err = ioutil.ReadFile(filepath.Clean(filename))
+	f, err = ioutil.ReadFile(filepath.Clean(fiLename))
 	if err != nil {
 		return MPLS{}, err
 	}
@@ -148,20 +238,20 @@ func (Mpls *MPLS) Parse(file io.ReadSeeker) error {
 
 	Mpls.Header = str
 
-	Mpls.playlistStart, err = readInt32(file, buf[:4])
-	fmt.Println("int:", Mpls.playlistStart, "binary:", buf[:4])
+	Mpls.PlaylistStart, err = readInt32(file, buf[:4])
+	fmt.Println("int:", Mpls.PlaylistStart, "binary:", buf[:4])
 	if err != nil {
 		return err
 	}
 
-	Mpls.playlistMarkStart, err = readInt32(file, buf[:4])
-	fmt.Println("int:", Mpls.playlistMarkStart, "binary:", buf[:4])
+	Mpls.PlaylistMarkStart, err = readInt32(file, buf[:4])
+	fmt.Println("int:", Mpls.PlaylistMarkStart, "binary:", buf[:4])
 	if err != nil {
 		return err
 	}
 
-	Mpls.extensionDataStart, err = readInt32(file, buf[:4])
-	fmt.Println("int:", Mpls.extensionDataStart, "binary:", buf[:4])
+	Mpls.ExtensionDataStart, err = readInt32(file, buf[:4])
+	fmt.Println("int:", Mpls.ExtensionDataStart, "binary:", buf[:4])
 	if err != nil {
 		return err
 	}
@@ -175,7 +265,7 @@ func (Mpls *MPLS) Parse(file io.ReadSeeker) error {
 		return err
 	}
 
-	_, err = file.Seek(int64(Mpls.playlistStart), io.SeekStart)
+	_, err = file.Seek(int64(Mpls.PlaylistStart), io.SeekStart)
 	if err != nil {
 		return err
 	}
@@ -230,8 +320,8 @@ func (p *Playlist) Parse(file io.ReadSeeker) error {
 		err error
 	)
 
-	p.len, err = readInt32(file, buf[:])
-	fmt.Println("int:", p.len, "binary:", buf[:4])
+	p.Len, err = readInt32(file, buf[:])
+	fmt.Println("int:", p.Len, "binary:", buf[:4])
 	if err != nil {
 		return err
 	}
@@ -239,23 +329,23 @@ func (p *Playlist) Parse(file io.ReadSeeker) error {
 	if err != nil {
 		return err
 	}
-	p.playItemCount, err = readUInt16(file, buf[:])
-	fmt.Println("int:", p.playItemCount, "binary:", buf[:2])
+	p.PlayItemCount, err = readUInt16(file, buf[:])
+	fmt.Println("int:", p.PlayItemCount, "binary:", buf[:2])
 	if err != nil {
 		return err
 	}
-	p.subPathCount, err = readUInt16(file, buf[:])
-	fmt.Println("int:", p.subPathCount, "binary:", buf[:2])
+	p.SubPathCount, err = readUInt16(file, buf[:])
+	fmt.Println("int:", p.SubPathCount, "binary:", buf[:2])
 	if err != nil {
 		return err
 	}
-	for i := 0; i < int(p.playItemCount); i++ {
+	for i := 0; i < int(p.PlayItemCount); i++ {
 		var item PlayItem
 		err = item.Parse(file)
 		if err != nil {
 			return err
 		}
-		p.playItems = append(p.playItems, item)
+		p.PlayItems = append(p.PlayItems, item)
 	}
 
 	return nil
@@ -269,38 +359,41 @@ func (pi *PlayItem) Parse(file io.Reader) error {
 		err error
 	)
 
-	pi.len, err = readUInt16(file, buf[:])
-	fmt.Println("int:", pi.len, "binary:", buf[:2])
+	pi.Len, err = readUInt16(file, buf[:])
+	fmt.Println("int:", pi.Len, "binary:", buf[:2])
 	if err != nil {
 		return err
 	}
+
 	n, err = file.Read(buf[:9])
 	if err != nil || n != 9 {
 		return err
 	}
+
 	str := string(buf[:9])
 	if str[5:9] != "M2TS" {
 		fmt.Fprintf(os.Stderr, "warning: this playlist may be faulty it has a play item that is '%s' not 'M2TS'", str[4:8])
 	}
-	pi.clpi.ClipFile = str[:5]
-	pi.clpi.ClipID = str[5:9]
+	pi.Clpi.ClipFile = str[:5]
+	pi.Clpi.ClipID = str[5:9]
 
-	pi.flags, err = readUInt16(file, buf[:])
+	pi.Flags, err = readUInt16(file, buf[:])
 	if err != nil {
 		return err
 	}
+
 	n, err = file.Read(buf[:1])
 	if err != nil || n != 1 {
 		return err
 	}
 	pi.STCID = buf[0]
 
-	pi.inTime, err = readInt32(file, buf[:])
+	pi.InTime, err = readInt32(file, buf[:])
 	if err != nil {
 		return err
 	}
 
-	pi.outTime, err = readInt32(file, buf[:])
+	pi.OutTime, err = readInt32(file, buf[:])
 	if err != nil {
 		return err
 	}
@@ -320,33 +413,33 @@ func (pi *PlayItem) Parse(file io.Reader) error {
 	if err != nil || n != 1 {
 		return err
 	}
-	pi.stillMode = buf[0]
+	pi.StillMode = buf[0]
 
-	pi.stillTime, err = readUInt16(file, buf[:])
+	pi.StillTime, err = readUInt16(file, buf[:])
 	if err != nil {
 		return err
 	}
 
-	if pi.flags&1 == 1 {
+	if pi.Flags&1 == 1 {
 		n, err = file.Read(buf[:1])
 		if err != nil || n != 1 {
 			return err
 		}
-		pi.angleCount = buf[0]
+		pi.AngleCount = buf[0]
 
 		n, err = file.Read(buf[:1])
 		if err != nil || n != 1 {
 			return err
 		}
-		pi.angleFlags = buf[0]
+		pi.AngleFlags = buf[0]
 
-		for i := 0; i < int(pi.angleCount); i++ {
+		for i := 0; i < int(pi.AngleCount); i++ {
 			var angle CLPI
 			err = angle.Parse(file)
 			if err != nil {
 				return err
 			}
-			pi.angles = append(pi.angles, angle)
+			pi.Angles = append(pi.Angles, angle)
 		}
 	}
 
