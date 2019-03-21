@@ -173,18 +173,58 @@ type Playlist struct {
 // PlayItem contains information about a an item in the playlist
 type PlayItem struct {
 	Len              uint16
-	Flags            uint16 // multiangle/connection condition
-	StillTime        uint16
 	Clpi             CLPI
+	Flags            uint16 // multiangle/connection condition
 	InTime           int
 	OutTime          int
 	UOMask           uint64
-	StillMode        byte
-	STCID            byte
 	RandomAccessFlag byte
+	StillMode        byte
+	StillTime        uint16
 	AngleCount       byte
 	AngleFlags       byte
 	Angles           []CLPI
+}
+
+// STNTable STream Number Table
+type STNTable struct {
+	Len                       uint16 // Reserved uint16
+	PrimaryVideoStreamCount   byte
+	PrimaryAudioStreamCount   byte
+	PrimaryPGStreamCount      byte
+	PrimaryIGStreamCount      byte
+	SecondaryVideoStreamCount byte
+	SecondaryAudioStreamCount byte
+	PIPPGStreamCount          byte
+	PrimaryVideoStreams       []PrimaryStream
+	PrimaryAudioStreams       []PrimaryStream
+	PrimaryPGStreams          []PrimaryStream
+	PrimaryIGStreams          []PrimaryStream
+}
+
+// PrimaryStream holds a stream entry and attributes
+type PrimaryStream struct {
+	StreamEntry
+	StreamAttributes
+}
+
+// StreamEntry holds the information for the data stream
+type StreamEntry struct {
+	Len       byte
+	Type      byte
+	PID       uint16
+	SubPathID byte
+	SubClipID byte
+}
+
+// StreamAttributes holds metadata about the data stream
+type StreamAttributes struct {
+	Len           byte
+	Encoding      byte
+	Format        byte
+	Rate          byte
+	Language      string
+	CharacterCode byte
 }
 
 // CLPI contains the fiLename and the codec ID
@@ -386,7 +426,7 @@ func (pi *PlayItem) Parse(file io.Reader) error {
 	if err != nil || n != 1 {
 		return err
 	}
-	pi.STCID = buf[0]
+	pi.Clpi.STCID = buf[0]
 
 	pi.InTime, err = readInt32(file, buf[:])
 	if err != nil {
