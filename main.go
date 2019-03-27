@@ -145,7 +145,8 @@ const (
 
 // MPLS is a struct representing an MPLS file
 type MPLS struct {
-	Header             string
+	FileType           string
+	Version            string
 	PlaylistStart      int
 	PlaylistMarkStart  int
 	ExtensionDataStart int
@@ -156,8 +157,8 @@ type MPLS struct {
 // AppInfoPlaylist sucks
 type AppInfoPlaylist struct {
 	Len           int
-	PlaybackType  int
-	PlaybackCount int
+	PlaybackType  byte
+	PlaybackCount uint16
 	UOMask        uint64
 	PlaylistFlags uint16
 }
@@ -184,6 +185,7 @@ type PlayItem struct {
 	AngleCount       byte
 	AngleFlags       byte
 	Angles           []CLPI
+	StreamTable      STNTable
 }
 
 // STNTable STream Number Table
@@ -234,37 +236,78 @@ type CLPI struct {
 	STCID    byte
 }
 
+type errReader struct {
+	RS  *bytes.Reader
+	err error
+}
+
+func (er *errReader) Read(p []byte) (n int, err error) {
+	if er.err != nil {
+		return 0, er.err
+	}
+
+	n, er.err = er.RS.Read(p)
+	if n != len(p) {
+		er.err = fmt.Errorf("%s", "Invalid read")
+	}
+
+	return n, er.err
+}
+
+func (er *errReader) Seek(offset int64, whence int) (int64, error) {
+	if er.err != nil {
+		return 0, er.err
+	}
+
+	var n64 int64
+	n64, er.err = er.Seek(offset, whence)
+
+	return n64, er.err
+}
+
 func main() {
-	Mpls, err := Parse(os.Args[1])
+	var (
+		file io.Reader
+		Mpls MPLS
+		err  error
+	)
+	file, err = os.Open(filepath.Clean(os.Args[1]))
+	if err != nil {
+		panic(err)
+	}
+	Mpls, err = Parse(file)
 	fmt.Println(Mpls)
 	panic(err)
 }
 
 // Parse parses an MPLS file into an MPLS struct
-func Parse(fiLename string) (Mpls MPLS, err error) {
+func Parse(reader io.Reader) (Mpls MPLS, err error) {
 	var (
-		file *bytes.Reader
-		f    []byte
+		file []byte
 	)
 
-	f, err = ioutil.ReadFile(filepath.Clean(fiLename))
+	file, err = ioutil.ReadAll(reader)
 	if err != nil {
 		return MPLS{}, err
 	}
-	file = bytes.NewReader(f)
+
 	err = Mpls.Parse(file)
 	return Mpls, err
 }
 
-// Parse reads MPLS data from an io.ReadSeeker
-func (Mpls *MPLS) Parse(file io.ReadSeeker) error {
+// Parse reads MPLS data from an io.ReadSeeker #nosec G104
+func (Mpls *MPLS) Parse(file []byte) error {
 	var (
 		buf [10]byte
 		n   int
 		err error
 	)
 
-	n, err = file.Read(buf[:8])
+	reader := &errReader{
+		RS:  bytes.NewReader(file),
+		err: nil,
+	}
+	n, err = reader.Read(buf[:8])
 	if err != nil || n != 8 {
 		return err
 	}
@@ -276,139 +319,94 @@ func (Mpls *MPLS) Parse(file io.ReadSeeker) error {
 		fmt.Fprintf(os.Stderr, "warning: mpls may not work it is version %s\n", str[4:8])
 	}
 
-	Mpls.Header = str
+	Mpls.FileType = str[:4]
+	Mpls.Version = str[4:8]
 
-	Mpls.PlaylistStart, err = readInt32(file, buf[:4])
+	Mpls.PlaylistStart, _ = readInt32(reader, buf[:])
 	fmt.Println("int:", Mpls.PlaylistStart, "binary:", buf[:4])
-	if err != nil {
-		return err
-	}
 
-	Mpls.PlaylistMarkStart, err = readInt32(file, buf[:4])
+	Mpls.PlaylistMarkStart, _ = readInt32(reader, buf[:])
 	fmt.Println("int:", Mpls.PlaylistMarkStart, "binary:", buf[:4])
-	if err != nil {
-		return err
-	}
 
-	Mpls.ExtensionDataStart, err = readInt32(file, buf[:4])
+	Mpls.ExtensionDataStart, _ = readInt32(reader, buf[:])
 	fmt.Println("int:", Mpls.ExtensionDataStart, "binary:", buf[:4])
-	if err != nil {
-		return err
-	}
 
-	_, err = file.Seek(20, io.SeekCurrent)
-	if err != nil {
-		return err
-	}
-	err = Mpls.AppInfoPlaylist.parse(file)
-	if err != nil {
-		return err
-	}
+	reader.Seek(20, io.SeekCurrent)
 
-	_, err = file.Seek(int64(Mpls.PlaylistStart), io.SeekStart)
-	if err != nil {
-		return err
-	}
+	Mpls.AppInfoPlaylist.parse(reader)
 
-	err = Mpls.Playlist.Parse(file)
-	if err != nil {
-		return err
-	}
-	return nil
+	reader.Seek(int64(Mpls.PlaylistStart), io.SeekStart)
+
+	Mpls.Playlist.parse(reader)
+
+	return reader.err
 }
 
-// Parse reads AppInfoPlaylist data from an io.ReadSeeker
-func (aip *AppInfoPlaylist) parse(file io.ReadSeeker) error {
+// parse reads AppInfoPlaylist data from an *errReader #nosec G104
+func (aip *AppInfoPlaylist) parse(reader *errReader) error {
 	var (
 		buf [10]byte
-		err error
-		n   int
 	)
-	aip.Len, err = readInt32(file, buf[:4])
+	aip.Len, _ = readInt32(reader, buf[:])
 	fmt.Println("int:", aip.Len, "binary:", buf[:4])
-	if err != nil {
-		return err
-	}
 
-	n, err = file.Read(buf[:4])
-	if err != nil || n != 4 {
-		return err
-	}
-	aip.PlaybackType = int(buf[1])
+	reader.Read(buf[:1])
+
+	aip.PlaybackType = buf[1]
 	fmt.Println("int:", aip.PlaybackType, "binary:", buf[1])
 
-	aip.PlaybackCount = int(binary.BigEndian.Uint16(buf[2:4]))
-	fmt.Println("int:", aip.PlaybackCount, "binary:", buf[2:4])
+	aip.PlaybackCount, _ = readUInt16(reader, buf[:])
+	fmt.Println("int:", aip.PlaybackCount, "binary:", buf[:2])
 
-	aip.UOMask, err = readUInt64(file, buf[:8])
+	aip.UOMask, _ = readUInt64(reader, buf[:])
 	fmt.Println("int:", aip.UOMask, "binary:", buf[:8])
-	if err != nil || n != 1 {
-		return err
-	}
-	aip.PlaylistFlags, err = readUInt16(file, buf[:2])
+
+	aip.PlaylistFlags, _ = readUInt16(reader, buf[:])
 	fmt.Println("int:", aip.PlaylistFlags, "binary:", buf[:2])
-	if err != nil || n != 1 {
-		return err
-	}
-	return nil
+
+	return reader.err
 }
 
-// Parse reads Playlist data from an io.ReadSeeker
-func (p *Playlist) Parse(file io.ReadSeeker) error {
+// parse reads Playlist data from an *errReader #nosec G104
+func (p *Playlist) parse(reader *errReader) error {
 	var (
 		buf [10]byte
 		err error
 	)
 
-	p.Len, err = readInt32(file, buf[:])
+	p.Len, _ = readInt32(reader, buf[:])
 	fmt.Println("int:", p.Len, "binary:", buf[:4])
-	if err != nil {
-		return err
-	}
-	_, err = file.Seek(2, io.SeekCurrent)
-	if err != nil {
-		return err
-	}
-	p.PlayItemCount, err = readUInt16(file, buf[:])
+
+	reader.Seek(2, io.SeekCurrent)
+
+	p.PlayItemCount, _ = readUInt16(reader, buf[:])
 	fmt.Println("int:", p.PlayItemCount, "binary:", buf[:2])
-	if err != nil {
-		return err
-	}
-	p.SubPathCount, err = readUInt16(file, buf[:])
+
+	p.SubPathCount, _ = readUInt16(reader, buf[:])
 	fmt.Println("int:", p.SubPathCount, "binary:", buf[:2])
-	if err != nil {
-		return err
-	}
+
 	for i := 0; i < int(p.PlayItemCount); i++ {
 		var item PlayItem
-		err = item.Parse(file)
+		err = item.parse(reader)
 		if err != nil {
 			return err
 		}
 		p.PlayItems = append(p.PlayItems, item)
 	}
 
-	return nil
+	return reader.err
 }
 
-// Parse reads PlayItem data from an io.ReadSeeker
-func (pi *PlayItem) Parse(file io.Reader) error {
+// parse reads PlayItem data from an *errReader #nosec G104
+func (pi *PlayItem) parse(reader *errReader) error {
 	var (
 		buf [10]byte
-		n   int
-		err error
 	)
 
-	pi.Len, err = readUInt16(file, buf[:])
+	pi.Len, _ = readUInt16(reader, buf[:])
 	fmt.Println("int:", pi.Len, "binary:", buf[:2])
-	if err != nil {
-		return err
-	}
 
-	n, err = file.Read(buf[:9])
-	if err != nil || n != 9 {
-		return err
-	}
+	reader.Read(buf[:9])
 
 	str := string(buf[:9])
 	if str[5:9] != "M2TS" {
@@ -417,121 +415,220 @@ func (pi *PlayItem) Parse(file io.Reader) error {
 	pi.Clpi.ClipFile = str[:5]
 	pi.Clpi.ClipID = str[5:9]
 
-	pi.Flags, err = readUInt16(file, buf[:])
-	if err != nil {
-		return err
-	}
+	pi.Flags, _ = readUInt16(reader, buf[:])
 
-	n, err = file.Read(buf[:1])
-	if err != nil || n != 1 {
-		return err
-	}
+	reader.Read(buf[:1])
+
 	pi.Clpi.STCID = buf[0]
 
-	pi.InTime, err = readInt32(file, buf[:])
-	if err != nil {
-		return err
-	}
+	pi.InTime, _ = readInt32(reader, buf[:])
 
-	pi.OutTime, err = readInt32(file, buf[:])
-	if err != nil {
-		return err
-	}
+	pi.OutTime, _ = readInt32(reader, buf[:])
 
-	pi.UOMask, err = readUInt64(file, buf[:])
-	if err != nil {
-		return err
-	}
+	pi.UOMask, _ = readUInt64(reader, buf[:])
 
-	n, err = file.Read(buf[:1])
-	if err != nil || n != 1 {
-		return err
-	}
+	reader.Read(buf[:2])
+
 	pi.RandomAccessFlag = buf[0]
 
-	n, err = file.Read(buf[:1])
-	if err != nil || n != 1 {
-		return err
-	}
-	pi.StillMode = buf[0]
+	pi.StillMode = buf[1]
 
-	pi.StillTime, err = readUInt16(file, buf[:])
-	if err != nil {
-		return err
-	}
+	pi.StillTime, _ = readUInt16(reader, buf[:])
 
 	if pi.Flags&1 == 1 {
-		n, err = file.Read(buf[:1])
-		if err != nil || n != 1 {
-			return err
-		}
+		reader.Read(buf[:2])
+
 		pi.AngleCount = buf[0]
 
-		n, err = file.Read(buf[:1])
-		if err != nil || n != 1 {
-			return err
-		}
-		pi.AngleFlags = buf[0]
+		pi.AngleFlags = buf[1]
 
 		for i := 0; i < int(pi.AngleCount); i++ {
 			var angle CLPI
-			err = angle.Parse(file)
-			if err != nil {
-				return err
-			}
+			angle.parse(reader)
+
 			pi.Angles = append(pi.Angles, angle)
 		}
 	}
 
-	return nil
+	pi.StreamTable.parse(reader)
+
+	return reader.err
 }
 
-// Parse reads angle data from an io.ReadSeeker
-func (clpi *CLPI) Parse(file io.Reader) error {
+// parse reads angle data from an *errReader #nosec G104
+func (clpi *CLPI) parse(reader *errReader) error {
 	var (
 		buf [10]byte
-		n   int
-		err error
 	)
-	n, err = file.Read(buf[:9])
-	if err != nil || n != 9 {
-		return err
-	}
+	reader.Read(buf[:])
+
 	str := string(buf[:9])
 	clpi.ClipFile = str[:5]
 	clpi.ClipID = str[5:9]
 
-	n, err = file.Read(buf[:1])
-	if err != nil || n != 1 {
-		return err
-	}
-	clpi.STCID = buf[0]
-	return nil
+	clpi.STCID = buf[9]
+	return reader.err
 }
 
-func readUInt16(file io.Reader, buf []byte) (uint16, error) {
-	n, err := file.Read(buf[:2])
+// parse reads Stream data from an *errReader #nosec G104
+func (stnt *STNTable) parse(reader *errReader) error {
+	var (
+		buf [10]byte
+		err error
+	)
+
+	stnt.Len, _ = readUInt16(reader, buf[:])
+
+	reader.Read(buf[:9])
+
+	stnt.PrimaryVideoStreamCount = buf[2]
+	stnt.PrimaryAudioStreamCount = buf[3]
+	stnt.PrimaryPGStreamCount = buf[4]
+	stnt.PrimaryIGStreamCount = buf[5]
+	stnt.SecondaryAudioStreamCount = buf[6]
+	stnt.SecondaryVideoStreamCount = buf[7]
+	stnt.PIPPGStreamCount = buf[8]
+
+	reader.Seek(5, io.SeekCurrent)
+
+	for i := 0; i < int(stnt.PrimaryVideoStreamCount); i++ {
+		var stream PrimaryStream
+		err = stream.parse(reader)
+		if err != nil {
+			return err
+		}
+		stnt.PrimaryVideoStreams = append(stnt.PrimaryVideoStreams, stream)
+	}
+
+	for i := 0; i < int(stnt.PrimaryAudioStreamCount); i++ {
+		var stream PrimaryStream
+		err = stream.parse(reader)
+		if err != nil {
+			return err
+		}
+		stnt.PrimaryAudioStreams = append(stnt.PrimaryAudioStreams, stream)
+	}
+
+	for i := 0; i < int(stnt.PrimaryIGStreamCount); i++ {
+		var stream PrimaryStream
+		err = stream.parse(reader)
+		if err != nil {
+			return err
+		}
+		stnt.PrimaryIGStreams = append(stnt.PrimaryIGStreams, stream)
+	}
+
+	for i := 0; i < int(stnt.PrimaryAudioStreamCount); i++ {
+		var stream PrimaryStream
+		err = stream.parse(reader)
+		if err != nil {
+			return err
+		}
+		stnt.PrimaryAudioStreams = append(stnt.PrimaryAudioStreams, stream)
+	}
+
+	return reader.err
+}
+
+// parse reads Stream data from an *errReader #nosec G104
+func (ps *PrimaryStream) parse(reader *errReader) error {
+
+	ps.StreamEntry.parse(reader)
+
+	ps.StreamAttributes.parse(reader)
+
+	return reader.err
+}
+
+// parse reads Stream data from an *errReader #nosec G104
+func (se *StreamEntry) parse(reader *errReader) error {
+	var (
+		buf [10]byte
+	)
+
+	reader.Read(buf[:])
+
+	se.Len = buf[0]
+	se.Type = buf[1]
+	switch se.Type {
+	case 1:
+		se.PID = binary.BigEndian.Uint16(buf[2:4])
+	case 2, 4:
+		se.SubPathID = buf[2]
+		se.SubClipID = buf[3]
+		se.PID = binary.BigEndian.Uint16(buf[4:6])
+	case 3:
+		se.SubPathID = buf[2]
+		se.PID = binary.BigEndian.Uint16(buf[3:5])
+	}
+
+	return reader.err
+}
+
+// parse reads Stream data from an *errReader #nosec G104
+func (sa *StreamAttributes) parse(reader *errReader) error {
+	var (
+		buf [10]byte
+	)
+	reader.Read(buf[:2])
+
+	sa.Len = buf[0]
+	sa.Encoding = buf[1]
+
+	switch sa.Encoding {
+	case VTMPEG1Video, VTMPEG2Video, VTVC1, VTH264:
+		reader.Read(buf[:1])
+
+		sa.Format = buf[0] & 0xf0 >> 4
+		sa.Rate = buf[0] & 0x0F
+
+	case ATMPEG1Audio, ATMPEG2Audio, ATLPCM, ATAC3, ATDTS, ATTRUEHD, ATAC3Plus, ATDTSHD, ATDTSHDMaster:
+		reader.Read(buf[:4])
+
+		sa.Format = buf[0] & 0xf0 >> 4
+		sa.Rate = buf[0] & 0x0F
+		sa.Language = string(buf[1:4])
+
+	case PresentationGraphics, InteractiveGraphics:
+		reader.Read(buf[:3])
+
+		sa.Language = string(buf[:3])
+
+	case TextSubtitle:
+		reader.Read(buf[:4])
+
+		sa.CharacterCode = buf[0]
+		sa.Language = string(buf[1:4])
+	default:
+		fmt.Fprintf(os.Stderr, "warning: unrecognized encoding: '%02X'", sa.Encoding)
+	}
+
+	return reader.err
+}
+
+func readUInt16(reader io.Reader, buf []byte) (uint16, error) {
+	n, err := reader.Read(buf[:2])
 	if err != nil || n != 2 {
 		return 0, err
 	}
 	return binary.BigEndian.Uint16(buf[:2]), nil
 }
 
-func readInt32(file io.Reader, buf []byte) (int, error) {
-	n, err := readUInt32(file, buf)
+func readInt32(reader io.Reader, buf []byte) (int, error) {
+	n, err := readUInt32(reader, buf)
 	return int(n), err
 }
 
-func readUInt32(file io.Reader, buf []byte) (uint32, error) {
-	n, err := file.Read(buf[:4])
+func readUInt32(reader io.Reader, buf []byte) (uint32, error) {
+	n, err := reader.Read(buf[:4])
 	if err != nil || n != 4 {
 		return 0, err
 	}
 	return binary.BigEndian.Uint32(buf[:4]), nil
 }
 
-func readUInt64(file io.Reader, buf []byte) (uint64, error) {
-	n, err := file.Read(buf[:8])
+func readUInt64(reader io.Reader, buf []byte) (uint64, error) {
+	n, err := reader.Read(buf[:8])
 	if err != nil || n != 8 {
 		return 0, err
 	}
