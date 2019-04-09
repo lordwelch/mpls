@@ -202,12 +202,33 @@ type STNTable struct {
 	PrimaryAudioStreams       []PrimaryStream
 	PrimaryPGStreams          []PrimaryStream
 	PrimaryIGStreams          []PrimaryStream
+	SecondaryAudioStreams     []SecondaryAudioStream
+	SecondaryVideoStreams     []SecondaryVideoStream
 }
 
 // PrimaryStream holds a stream entry and attributes
 type PrimaryStream struct {
 	StreamEntry
 	StreamAttributes
+}
+
+// SecondaryStream holds stream references
+type SecondaryStream struct {
+	RefrenceEntryCount byte
+	StreamIDs          []byte
+}
+
+// SecondaryAudioStream holds a primary stream and a secondary stream
+type SecondaryAudioStream struct {
+	PrimaryStream
+	ExtraAttributes SecondaryStream
+}
+
+// SecondaryVideoStream holds a primary stream and a secondary stream for the video and a secondary stream for the Presentation Graphics/pip
+type SecondaryVideoStream struct {
+	PrimaryStream
+	ExtraAttributes SecondaryStream
+	PGStream        SecondaryStream
 }
 
 // StreamEntry holds the information for the data stream
@@ -234,6 +255,33 @@ type CLPI struct {
 	ClipFile string
 	ClipID   string // M2TS
 	STCID    byte
+}
+
+type SubPath struct {
+	Len           uint32
+	Type          byte
+	flags         uint16
+	PlayItemCount byte
+}
+
+// SubPlayItem contains information about a PlayItem in the subpath
+type SubPlayItem struct {
+	Len              uint16
+	Clpi             CLPI
+	Flags            byte // multiangle/connection condition
+	Type             byte
+	InTime           int
+	OutTime          int
+	PlayItemID       uint16
+	StartOfPlayitem  uint64
+	UOMask           uint64
+	RandomAccessFlag byte
+	StillMode        byte
+	StillTime        uint16
+	AngleCount       byte
+	AngleFlags       byte
+	Angles           []CLPI
+	StreamTable      STNTable
 }
 
 type errReader struct {
@@ -394,6 +442,10 @@ func (p *Playlist) parse(reader *errReader) error {
 		p.PlayItems = append(p.PlayItems, item)
 	}
 
+	for i := 0; i < int(p.SubPathCount); i++ {
+
+	}
+
 	return reader.err
 }
 
@@ -470,7 +522,7 @@ func (clpi *CLPI) parse(reader *errReader) error {
 	return reader.err
 }
 
-// parse reads Stream data from an *errReader #nosec G104
+// parse reads PrimaryStream data from an *errReader #nosec G104
 func (stnt *STNTable) parse(reader *errReader) error {
 	var (
 		buf [10]byte
@@ -509,6 +561,15 @@ func (stnt *STNTable) parse(reader *errReader) error {
 		stnt.PrimaryAudioStreams = append(stnt.PrimaryAudioStreams, stream)
 	}
 
+	for i := 0; i < int(stnt.PrimaryPGStreamCount); i++ {
+		var stream PrimaryStream
+		err = stream.parse(reader)
+		if err != nil {
+			return err
+		}
+		stnt.PrimaryPGStreams = append(stnt.PrimaryPGStreams, stream)
+	}
+
 	for i := 0; i < int(stnt.PrimaryIGStreamCount); i++ {
 		var stream PrimaryStream
 		err = stream.parse(reader)
@@ -518,14 +579,56 @@ func (stnt *STNTable) parse(reader *errReader) error {
 		stnt.PrimaryIGStreams = append(stnt.PrimaryIGStreams, stream)
 	}
 
-	for i := 0; i < int(stnt.PrimaryAudioStreamCount); i++ {
-		var stream PrimaryStream
+	for i := 0; i < int(stnt.SecondaryAudioStreamCount); i++ {
+		var stream SecondaryAudioStream
 		err = stream.parse(reader)
 		if err != nil {
 			return err
 		}
-		stnt.PrimaryAudioStreams = append(stnt.PrimaryAudioStreams, stream)
+		stnt.SecondaryAudioStreams = append(stnt.SecondaryAudioStreams, stream)
 	}
+
+	for i := 0; i < int(stnt.SecondaryVideoStreamCount); i++ {
+		var stream SecondaryVideoStream
+		err = stream.parse(reader)
+		if err != nil {
+			return err
+		}
+		stnt.SecondaryVideoStreams = append(stnt.SecondaryVideoStreams, stream)
+	}
+
+	return reader.err
+}
+
+// parse reads SecondaryStream data from an *errReader #nosec G104
+func (ss *SecondaryStream) parse(reader *errReader) error {
+	var (
+		buf [10]byte
+	)
+
+	reader.Read(buf[:2])
+	ss.RefrenceEntryCount = buf[0]
+	ss.StreamIDs = make([]byte, ss.RefrenceEntryCount, ss.RefrenceEntryCount)
+	reader.Read(ss.StreamIDs)
+	if ss.RefrenceEntryCount%2 != 0 {
+		reader.Seek(1, io.SeekCurrent)
+	}
+	return reader.err
+}
+
+// parse reads SecondaryAudioStream data from an *errReader #nosec G104
+func (sas *SecondaryAudioStream) parse(reader *errReader) error {
+	sas.PrimaryStream.parse(reader)
+	sas.ExtraAttributes.parse(reader)
+
+	return reader.err
+}
+
+// parse reads SecondaryVideoStream data from an *errReader #nosec G104
+func (svs *SecondaryVideoStream) parse(reader *errReader) error {
+	svs.PrimaryStream.parse(reader)
+	svs.ExtraAttributes.parse(reader)
+	svs.PGStream.parse(reader)
 
 	return reader.err
 }
