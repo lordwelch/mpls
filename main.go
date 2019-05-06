@@ -8,6 +8,7 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
+	"text/tabwriter"
 )
 
 // User Operation mask table
@@ -152,6 +153,7 @@ type MPLS struct {
 	ExtensionDataStart int
 	AppInfoPlaylist    AppInfoPlaylist
 	Playlist           Playlist
+	MarkPlaylist       PlaylistMark
 }
 
 // AppInfoPlaylist sucks
@@ -169,6 +171,7 @@ type Playlist struct {
 	PlayItemCount uint16
 	SubPathCount  uint16
 	PlayItems     []PlayItem
+	SubPaths      []SubPath
 }
 
 // PlayItem contains information about a an item in the playlist
@@ -259,20 +262,20 @@ type CLPI struct {
 }
 
 type SubPath struct {
-	Len           uint32
+	Len           int
 	Type          byte
 	PlayItemCount byte
 	Flags         uint16
+	SubPlayItems  []SubPlayItem
 }
 
 // SubPlayItem contains information about a PlayItem in the subpath
 type SubPlayItem struct {
 	Len              uint16
 	Flags            byte // multiangle/connection condition
-	Type             byte
+	StartOfPlayitem  uint32
 	InTime           int
 	OutTime          int
-	StartOfPlayitem  uint64
 	UOMask           uint64
 	RandomAccessFlag byte
 	AngleCount       byte
@@ -283,6 +286,20 @@ type SubPlayItem struct {
 	Clpi             CLPI
 	Angles           []CLPI
 	StreamTable      STNTable
+}
+
+type PlaylistMark struct {
+	Len       uint64
+	MarkCount uint16
+	Marks     []Mark
+}
+
+type Mark struct {
+	Type        byte
+	PlayItemRef uint16
+	Time        uint32
+	PID         uint16
+	Duration    uint32
 }
 
 type errReader struct {
@@ -309,7 +326,7 @@ func (er *errReader) Seek(offset int64, whence int) (int64, error) {
 	}
 
 	var n64 int64
-	n64, er.err = er.Seek(offset, whence)
+	n64, er.err = er.RS.Seek(offset, whence)
 
 	return n64, er.err
 }
@@ -324,10 +341,25 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+	twriter = tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
+	write = func(name string, v interface{}, bin []byte) {
+		fmt.Fprintf(twriter, "name: %s\tint: %d\tBinary: %08b\tHex: % X\n", name, v, bin, bin)
+	}
+	empty = func() {
+		fmt.Fprintf(twriter, "\t\t\t\n")
+	}
+
 	Mpls, err = Parse(file)
+	twriter.Flush()
 	fmt.Println(Mpls)
 	panic(err)
 }
+
+var (
+	twriter *tabwriter.Writer
+	write   func(string, interface{}, []byte)
+	empty   func()
+)
 
 // Parse parses an MPLS file into an MPLS struct
 func Parse(reader io.Reader) (mpls MPLS, err error) {
@@ -356,6 +388,9 @@ func (mpls *MPLS) Parse(file []byte) error {
 		RS:  bytes.NewReader(file),
 		err: nil,
 	}
+
+	fmt.Fprintln(twriter, "Parsing MPLS file\n")
+
 	n, err = reader.Read(buf[:8])
 	if err != nil || n != 8 {
 		return err
@@ -370,15 +405,17 @@ func (mpls *MPLS) Parse(file []byte) error {
 
 	mpls.FileType = str[:4]
 	mpls.Version = str[4:8]
+	write("FileType", mpls.FileType, buf[:4])
+	write("Version", mpls.Version, buf[4:8])
 
 	mpls.PlaylistStart, _ = readInt32(reader, buf[:])
-	fmt.Println("int:", mpls.PlaylistStart, "binary:", buf[:4])
+	write("Playlist Start", mpls.PlaylistStart, buf[:4])
 
 	mpls.PlaylistMarkStart, _ = readInt32(reader, buf[:])
-	fmt.Println("int:", mpls.PlaylistMarkStart, "binary:", buf[:4])
+	write("Playlist Mark Start", mpls.PlaylistMarkStart, buf[:4])
 
 	mpls.ExtensionDataStart, _ = readInt32(reader, buf[:])
-	fmt.Println("int:", mpls.ExtensionDataStart, "binary:", buf[:4])
+	write("Extension Data Start", mpls.ExtensionDataStart, buf[:4])
 
 	_, _ = reader.Seek(20, io.SeekCurrent)
 
@@ -387,6 +424,7 @@ func (mpls *MPLS) Parse(file []byte) error {
 	_, _ = reader.Seek(int64(mpls.PlaylistStart), io.SeekStart)
 
 	_ = mpls.Playlist.parse(reader)
+	// _ = mpls.MarkPlaylist.parse(reader)
 
 	return reader.err
 }
@@ -396,22 +434,25 @@ func (aip *AppInfoPlaylist) parse(reader *errReader) error {
 	var (
 		buf [10]byte
 	)
+
+	fmt.Fprintln(twriter, "\nParsing App Info Playlist\n")
+
 	aip.Len, _ = readInt32(reader, buf[:])
-	fmt.Println("int:", aip.Len, "binary:", buf[:4])
+	write("Length", aip.Len, buf[:4])
 
 	_, _ = reader.Read(buf[:1])
 
 	aip.PlaybackType = buf[1]
-	fmt.Println("int:", aip.PlaybackType, "binary:", buf[1])
+	write("Playback Type", aip.PlaybackType, buf[:1])
 
 	aip.PlaybackCount, _ = readUInt16(reader, buf[:])
-	fmt.Println("int:", aip.PlaybackCount, "binary:", buf[:2])
+	write("Playback Count", aip.PlaybackCount, buf[:2])
 
 	aip.UOMask, _ = readUInt64(reader, buf[:])
-	fmt.Println("int:", aip.UOMask, "binary:", buf[:8])
+	write("UO Mask", aip.UOMask, buf[:8])
 
 	aip.PlaylistFlags, _ = readUInt16(reader, buf[:])
-	fmt.Println("int:", aip.PlaylistFlags, "binary:", buf[:2])
+	write("Flags", aip.PlaylistFlags, buf[:2])
 
 	return reader.err
 }
@@ -423,16 +464,18 @@ func (p *Playlist) parse(reader *errReader) error {
 		err error
 	)
 
+	fmt.Fprintln(twriter, "\nParsing Playlist\n")
+
 	p.Len, _ = readInt32(reader, buf[:])
-	fmt.Println("int:", p.Len, "binary:", buf[:4])
+	write("Length", p.Len, buf[:4])
 
 	_, _ = reader.Seek(2, io.SeekCurrent)
 
 	p.PlayItemCount, _ = readUInt16(reader, buf[:])
-	fmt.Println("int:", p.PlayItemCount, "binary:", buf[:2])
+	write("Play Item Count", p.PlayItemCount, buf[:2])
 
 	p.SubPathCount, _ = readUInt16(reader, buf[:])
-	fmt.Println("int:", p.SubPathCount, "binary:", buf[:2])
+	write("Sub Path Count", p.SubPathCount, buf[:2])
 
 	for i := 0; i < int(p.PlayItemCount); i++ {
 		var item PlayItem
@@ -444,7 +487,12 @@ func (p *Playlist) parse(reader *errReader) error {
 	}
 
 	for i := 0; i < int(p.SubPathCount); i++ {
-
+		var item SubPath
+		err = item.parse(reader)
+		if err != nil {
+			return err
+		}
+		p.SubPaths = append(p.SubPaths, item)
 	}
 
 	return reader.err
@@ -454,10 +502,13 @@ func (p *Playlist) parse(reader *errReader) error {
 func (pi *PlayItem) parse(reader *errReader) error {
 	var (
 		buf [10]byte
+		err error
 	)
 
+	fmt.Fprintln(twriter, "\nParsing Play Item\n")
+
 	pi.Len, _ = readUInt16(reader, buf[:])
-	fmt.Println("int:", pi.Len, "binary:", buf[:2])
+	write("length", pi.Len, buf[:2])
 
 	_, _ = reader.Read(buf[:9])
 
@@ -468,37 +519,55 @@ func (pi *PlayItem) parse(reader *errReader) error {
 	pi.Clpi.ClipFile = str[:5]
 	pi.Clpi.ClipID = str[5:9]
 
+	write("Clip ID", pi.Clpi.ClipFile, buf[:5])
+	write("Clip Type", pi.Clpi.ClipID, buf[5:9])
+
 	pi.Flags, _ = readUInt16(reader, buf[:])
+	write("Flags", pi.Flags, buf[:2])
 
 	_, _ = reader.Read(buf[:1])
 
 	pi.Clpi.STCID = buf[0]
+	write("STC ID", pi.Clpi.STCID, buf[:1])
 
 	pi.InTime, _ = readInt32(reader, buf[:])
+	write("Start Time", pi.InTime, buf[:4])
 
 	pi.OutTime, _ = readInt32(reader, buf[:])
+	write("End Time", pi.OutTime, buf[:4])
 
 	pi.UOMask, _ = readUInt64(reader, buf[:])
+	write("UO Mask", pi.UOMask, buf[:8])
 
 	_, _ = reader.Read(buf[:2])
 
 	pi.RandomAccessFlag = buf[0]
+	write("Random Access Flag", pi.RandomAccessFlag, buf[:1])
 
 	pi.StillMode = buf[1]
+	write("Still Mode", pi.StillMode, buf[1:2])
 
 	pi.StillTime, _ = readUInt16(reader, buf[:])
+	write("Still Time", pi.StillTime, buf[:2])
 
-	if pi.Flags&1 == 1 {
+	if pi.Flags&1<<3 == 1 {
 		_, _ = reader.Read(buf[:2])
 
 		pi.AngleCount = buf[0]
+		write("Angle Count", pi.AngleCount, buf[:1])
 
 		pi.AngleFlags = buf[1]
+		write("Angle Flags", pi.AngleFlags, buf[1:2])
 
 		for i := 0; i < int(pi.AngleCount); i++ {
 			var angle CLPI
 			_ = angle.parse(reader)
-
+			_, err = reader.Read(buf[:1])
+			if err != nil {
+				return err
+			}
+			angle.STCID = buf[0]
+			write("STC ID", angle.STCID, buf[:1])
 			pi.Angles = append(pi.Angles, angle)
 		}
 	}
@@ -518,8 +587,10 @@ func (clpi *CLPI) parse(reader *errReader) error {
 	str := string(buf[:9])
 	clpi.ClipFile = str[:5]
 	clpi.ClipID = str[5:9]
+	write("Clip ID", clpi.ClipFile, buf[:5])
+	write("Clip Type", clpi.ClipID, buf[5:9])
 
-	clpi.STCID = buf[9]
+	// clpi.STCID = buf[9]
 	return reader.err
 }
 
@@ -529,23 +600,32 @@ func (stnt *STNTable) parse(reader *errReader) error {
 		buf [10]byte
 		err error
 	)
-
+	fmt.Fprintln(twriter, "\nParsing Stream Table\n")
 	stnt.Len, _ = readUInt16(reader, buf[:])
+	write("Length", stnt.Len, buf[:2])
 
 	_, _ = reader.Read(buf[:9])
 
 	stnt.PrimaryVideoStreamCount = buf[2]
+	write("Primary Video Count", stnt.PrimaryVideoStreamCount, buf[1:2])
 	stnt.PrimaryAudioStreamCount = buf[3]
+	write("Primary Audio Count", stnt.PrimaryAudioStreamCount, buf[2:3])
 	stnt.PrimaryPGStreamCount = buf[4]
+	write("Primary PG Count", stnt.PrimaryPGStreamCount, buf[3:4])
 	stnt.PrimaryIGStreamCount = buf[5]
+	write("Primary IG Count", stnt.PrimaryIGStreamCount, buf[4:5])
 	stnt.SecondaryAudioStreamCount = buf[6]
+	write("Secondary Audio Count", stnt.SecondaryAudioStreamCount, buf[5:6])
 	stnt.SecondaryVideoStreamCount = buf[7]
+	write("Secondary Video Count", stnt.SecondaryVideoStreamCount, buf[6:7])
 	stnt.PIPPGStreamCount = buf[8]
+	write("PIP PG Count", stnt.PIPPGStreamCount, buf[7:8])
 
 	_, _ = reader.Seek(5, io.SeekCurrent)
 
 	for i := 0; i < int(stnt.PrimaryVideoStreamCount); i++ {
 		var stream PrimaryStream
+		fmt.Fprintln(twriter, "\nParsing Video Stream\n")
 		err = stream.parse(reader)
 		if err != nil {
 			return err
@@ -555,6 +635,7 @@ func (stnt *STNTable) parse(reader *errReader) error {
 
 	for i := 0; i < int(stnt.PrimaryAudioStreamCount); i++ {
 		var stream PrimaryStream
+		fmt.Fprintln(twriter, "\nParsing Audio Stream\n")
 		err = stream.parse(reader)
 		if err != nil {
 			return err
@@ -564,6 +645,7 @@ func (stnt *STNTable) parse(reader *errReader) error {
 
 	for i := 0; i < int(stnt.PrimaryPGStreamCount); i++ {
 		var stream PrimaryStream
+		fmt.Fprintln(twriter, "\nParsing PG Stream\n")
 		err = stream.parse(reader)
 		if err != nil {
 			return err
@@ -573,6 +655,7 @@ func (stnt *STNTable) parse(reader *errReader) error {
 
 	for i := 0; i < int(stnt.PrimaryIGStreamCount); i++ {
 		var stream PrimaryStream
+		fmt.Fprintln(twriter, "\nParsing IG Stream\n")
 		err = stream.parse(reader)
 		if err != nil {
 			return err
@@ -582,6 +665,7 @@ func (stnt *STNTable) parse(reader *errReader) error {
 
 	for i := 0; i < int(stnt.SecondaryAudioStreamCount); i++ {
 		var stream SecondaryAudioStream
+		fmt.Fprintln(twriter, "\nParsing Audio Stream\n")
 		err = stream.parse(reader)
 		if err != nil {
 			return err
@@ -591,6 +675,7 @@ func (stnt *STNTable) parse(reader *errReader) error {
 
 	for i := 0; i < int(stnt.SecondaryVideoStreamCount); i++ {
 		var stream SecondaryVideoStream
+		fmt.Fprintln(twriter, "\nParsing Video Stream\n")
 		err = stream.parse(reader)
 		if err != nil {
 			return err
@@ -607,13 +692,17 @@ func (ss *SecondaryStream) parse(reader *errReader) error {
 		buf [10]byte
 	)
 
+	fmt.Fprintln(twriter, "\nParsing Secondary Stream\n")
+
 	_, _ = reader.Read(buf[:2])
 	ss.RefrenceEntryCount = buf[0]
+	write("Reference Entry Count", ss.RefrenceEntryCount, buf[:1])
 	ss.StreamIDs = make([]byte, ss.RefrenceEntryCount)
 	_, _ = reader.Read(ss.StreamIDs)
 	if ss.RefrenceEntryCount%2 != 0 {
 		_, _ = reader.Seek(1, io.SeekCurrent)
 	}
+	write("Stream IDs", ss.StreamIDs, ss.StreamIDs)
 	return reader.err
 }
 
@@ -653,17 +742,25 @@ func (se *StreamEntry) parse(reader *errReader) error {
 	_, _ = reader.Read(buf[:])
 
 	se.Len = buf[0]
+	write("Length", se.Len, buf[:1])
 	se.Type = buf[1]
+	write("Type", se.Type, buf[1:2])
 	switch se.Type {
 	case 1:
 		se.PID = binary.BigEndian.Uint16(buf[2:4])
+		write("PID", se.PID, buf[2:4])
 	case 2, 4:
 		se.SubPathID = buf[2]
+		write("Sub Path ID", se.SubPathID, buf[2:3])
 		se.SubClipID = buf[3]
+		write("Sub Clip ID", se.SubClipID, buf[3:4])
 		se.PID = binary.BigEndian.Uint16(buf[4:6])
+		write("PID", se.PID, buf[2:4])
 	case 3:
 		se.SubPathID = buf[2]
+		write("Sub Path ID", se.SubPathID, buf[2:3])
 		se.PID = binary.BigEndian.Uint16(buf[3:5])
+		write("PID", se.PID, buf[2:4])
 	}
 
 	return reader.err
@@ -674,10 +771,14 @@ func (sa *StreamAttributes) parse(reader *errReader) error {
 	var (
 		buf [10]byte
 	)
+	empty()
 	_, _ = reader.Read(buf[:2])
 
 	sa.Len = buf[0]
 	sa.Encoding = buf[1]
+
+	write("Length", sa.Len, buf[:1])
+	write("Encoding", sa.Encoding, buf[1:2])
 
 	switch sa.Encoding {
 	case VTMPEG1Video, VTMPEG2Video, VTVC1, VTH264:
@@ -685,6 +786,9 @@ func (sa *StreamAttributes) parse(reader *errReader) error {
 
 		sa.Format = buf[0] & 0xf0 >> 4
 		sa.Rate = buf[0] & 0x0F
+		write("Format", sa.Format, buf[:1])
+		write("Rate", sa.Rate, buf[:1])
+		_, _ = reader.Seek(3, io.SeekCurrent)
 
 	case ATMPEG1Audio, ATMPEG2Audio, ATLPCM, ATAC3, ATDTS, ATTRUEHD, ATAC3Plus, ATDTSHD, ATDTSHDMaster:
 		_, _ = reader.Read(buf[:4])
@@ -692,19 +796,113 @@ func (sa *StreamAttributes) parse(reader *errReader) error {
 		sa.Format = buf[0] & 0xf0 >> 4
 		sa.Rate = buf[0] & 0x0F
 		sa.Language = string(buf[1:4])
+		write("Format", sa.Format, buf[:1])
+		write("Rate", sa.Rate, buf[:1])
+		write("Language", sa.Language, buf[1:4])
 
 	case PresentationGraphics, InteractiveGraphics:
 		_, _ = reader.Read(buf[:3])
 
 		sa.Language = string(buf[:3])
+		write("Language", sa.Language, buf[1:4])
+		_, _ = reader.Seek(1, io.SeekCurrent)
 
 	case TextSubtitle:
 		_, _ = reader.Read(buf[:4])
 
 		sa.CharacterCode = buf[0]
 		sa.Language = string(buf[1:4])
+		write("Character Code", sa.CharacterCode, buf[:1])
+		write("Language", sa.Language, buf[1:4])
 	default:
-		fmt.Fprintf(os.Stderr, "warning: unrecognized encoding: '%02X'", sa.Encoding)
+		fmt.Fprintf(os.Stderr, "warning: unrecognized encoding: '%02X'\n", sa.Encoding)
+	}
+
+	return reader.err
+}
+
+func (sp *SubPath) parse(reader *errReader) error {
+	var (
+		buf [10]byte
+		err error
+	)
+
+	fmt.Fprintln(twriter, "\nParsing Sub Path\n")
+
+	sp.Len, _ = readInt32(reader, buf[:])
+	write("Length", sp.Len, buf[:4])
+
+	_, _ = reader.Read(buf[:1])
+	sp.Type = buf[0]
+	write("Type", sp.Type, buf[:1])
+	sp.Flags, _ = readUInt16(reader, buf[:])
+	write("Flags", sp.Flags, buf[:2])
+
+	_, _ = reader.Read(buf[:2])
+	sp.PlayItemCount = buf[1]
+	write("Play Item Count", sp.PlayItemCount, buf[:1])
+
+	for i := 0; i < int(sp.PlayItemCount); i++ {
+		var item SubPlayItem
+		err = item.parse(reader)
+		if err != nil {
+			return err
+		}
+		sp.SubPlayItems = append(sp.SubPlayItems, item)
+	}
+
+	return reader.err
+}
+
+func (spi *SubPlayItem) parse(reader *errReader) error {
+	var (
+		buf [10]byte
+		err error
+	)
+
+	fmt.Fprintln(twriter, "\nParsing Play Item\n")
+
+	spi.Len, _ = readUInt16(reader, buf[:])
+	write("Length", spi.Len, buf[:2])
+
+	_ = spi.Clpi.parse(reader)
+
+	_, _ = reader.Read(buf[:4])
+
+	spi.Flags = buf[2]
+	write("Flags", spi.Flags, buf[:2])
+	spi.Clpi.STCID = buf[3]
+	write("STC ID", spi.Clpi.STCID, buf[2:3])
+
+	spi.InTime, _ = readInt32(reader, buf[:])
+	write("Start Time", spi.InTime, buf[:4])
+	spi.OutTime, _ = readInt32(reader, buf[:])
+	write("End Time", spi.OutTime, buf[:4])
+
+	spi.PlayItemID, _ = readUInt16(reader, buf[:])
+	write("Play Item ID", spi.PlayItemID, buf[:2])
+	spi.StartOfPlayitem, _ = readUInt32(reader, buf[:])
+	write("Start Of Play Item", spi.StartOfPlayitem, buf[:4])
+
+	if spi.Flags&1<<3 == 1 {
+		_, _ = reader.Read(buf[:2])
+
+		spi.AngleCount = buf[0]
+		spi.AngleFlags = buf[1]
+		write("Angle Count", spi.AngleCount, buf[:1])
+		write("Angle Flags", spi.AngleFlags, buf[1:2])
+
+		for i := 0; i < int(spi.AngleCount); i++ {
+			var angle CLPI
+			_ = angle.parse(reader)
+			_, err = reader.Read(buf[:1])
+			if err != nil {
+				return err
+			}
+			angle.STCID = buf[0]
+			write("STC ID", angle.STCID, buf[2:3])
+			spi.Angles = append(spi.Angles, angle)
+		}
 	}
 
 	return reader.err
