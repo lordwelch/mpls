@@ -1,4 +1,4 @@
-package main
+package mpls
 
 import (
 	"bytes"
@@ -7,300 +7,7 @@ import (
 	"io"
 	"io/ioutil"
 	"os"
-	"path/filepath"
-	"text/tabwriter"
 )
-
-// User Operation mask table
-const (
-	UOChapterSearchMask = 1 << iota
-	UOTimeSearchMask
-	UOSkipToNextPointMask
-	UOSkipBackToPreviousPointMask
-	UOForwardPlayMask
-	UOBackwardPlayMask
-	UOPlayMask
-	UOStopMask
-	UOPauseOnMask
-	UOPauseOffMask
-	UOStillOffMask
-	UOResumeMask
-	UOMoveUpSelectedButtonMask
-	UOMoveDownSelectedButtonMask
-	UOMoveLeftSelectedButtonMask
-	UOMoveRightSelectedButtonMask
-	UOSelectButtonMask
-	UOActivateAndActivateMask
-	UOSelectAndActivateMask
-	UOAudioChangeMask
-	UOPgTextstChangeMask
-	UOAngleChangeMask
-	UOPopupOnMask
-	UOPopupOffMask
-	UOSelectMenuLanguageMask
-)
-
-// Playlist Flags
-const (
-	PFPlaylistRandomAccess = 1 << iota
-	PFAudioMixApp
-	PFLosslessMayBypassMixer
-	PFreserved
-)
-
-// Angle Flags
-const (
-	AFIsDifferentAudios = 1 << (iota + 7)
-	AFIsSeamlessAngleChange
-)
-
-// VideoType
-const (
-	VTMPEG1Video = 0x01
-	VTMPEG2Video = 0x02
-	VTVC1        = 0xea
-	VTH264       = 0x1b
-)
-
-// AudioType
-const (
-	ATMPEG1Audio  = 0x03
-	ATMPEG2Audio  = 0x04
-	ATLPCM        = 0x80
-	ATAC3         = 0x81
-	ATDTS         = 0x82
-	ATTRUEHD      = 0x83
-	ATAC3Plus     = 0x84
-	ATDTSHD       = 0x85
-	ATDTSHDMaster = 0x86
-)
-
-// OtherType
-const (
-	PresentationGraphics = 0x90
-	InteractiveGraphics  = 0x91
-	TextSubtitle         = 0x92
-)
-
-// VideoFormat
-const (
-	VFReserved = iota
-	VF480I
-	VF576I
-	VF480P
-	VF1080I
-	VF720P
-	VF1080P
-	VF576P
-)
-
-// FrameRate
-const (
-	FRReserved = iota
-	FR23976    // 23.976
-	FR24       // 24
-	FR25       // 25
-	FR2997     // 29.97
-	FR50       // 50
-	FR5994     // 59.94
-)
-
-// AspectRatio
-const (
-	ARReserved = 0
-	AR43       = 2 //4:3
-	AR169      = 3 //16:9
-)
-
-// AudioPresentation
-const (
-	APReserved = 0
-	APMono     = 1
-	APDualMono = 2
-	APStereo   = 3
-	APMulti    = 6
-	APCombo    = 12
-)
-
-// SampleRate
-const (
-	SRReserved = 0
-	SR48       = 1
-	SR96       = 4
-	SR192      = 5
-	SR48192    = 12 // 48/192
-	SR4896     = 14 // 48/96
-)
-
-// CharacterCode
-const (
-	ReservedCharacterCode = iota
-	UTF8
-	UTF16
-	ShiftJIS // Japanese
-	KSC5601  // Korean
-	GB18030  // Chinese
-	GB2312   // Chinese
-	BIG5     // Chinese
-) // Chinese
-
-// MPLS is a struct representing an MPLS file
-type MPLS struct {
-	FileType           string
-	Version            string
-	PlaylistStart      int
-	PlaylistMarkStart  int
-	ExtensionDataStart int
-	AppInfoPlaylist    AppInfoPlaylist
-	Playlist           Playlist
-	MarkPlaylist       PlaylistMark
-}
-
-// AppInfoPlaylist sucks
-type AppInfoPlaylist struct {
-	Len           int
-	PlaybackType  byte
-	PlaybackCount uint16
-	PlaylistFlags uint16
-	UOMask        uint64
-}
-
-// Playlist sucks
-type Playlist struct {
-	Len           int
-	PlayItemCount uint16
-	SubPathCount  uint16
-	PlayItems     []PlayItem
-	SubPaths      []SubPath
-}
-
-// PlayItem contains information about a an item in the playlist
-type PlayItem struct {
-	Len              uint16
-	Flags            uint16 // multiangle/connection condition
-	InTime           int
-	OutTime          int
-	UOMask           uint64
-	RandomAccessFlag byte
-	AngleCount       byte
-	AngleFlags       byte
-	StillMode        byte
-	StillTime        uint16
-	Clpi             CLPI
-	Angles           []CLPI
-	StreamTable      STNTable
-}
-
-// STNTable STream Number Table
-type STNTable struct {
-	Len                       uint16 // Reserved uint16
-	PrimaryVideoStreamCount   byte
-	PrimaryAudioStreamCount   byte
-	PrimaryPGStreamCount      byte
-	PrimaryIGStreamCount      byte
-	SecondaryVideoStreamCount byte
-	SecondaryAudioStreamCount byte
-	PIPPGStreamCount          byte
-	PrimaryVideoStreams       []PrimaryStream
-	PrimaryAudioStreams       []PrimaryStream
-	PrimaryPGStreams          []PrimaryStream
-	PrimaryIGStreams          []PrimaryStream
-	SecondaryAudioStreams     []SecondaryAudioStream
-	SecondaryVideoStreams     []SecondaryVideoStream
-}
-
-// PrimaryStream holds a stream entry and attributes
-type PrimaryStream struct {
-	StreamEntry
-	StreamAttributes
-}
-
-// SecondaryStream holds stream references
-type SecondaryStream struct {
-	RefrenceEntryCount byte
-	StreamIDs          []byte
-}
-
-// SecondaryAudioStream holds a primary stream and a secondary stream
-type SecondaryAudioStream struct {
-	PrimaryStream
-	ExtraAttributes SecondaryStream
-}
-
-// SecondaryVideoStream holds a primary stream and a secondary stream for the video
-// and a secondary stream for the Presentation Graphics/pip
-type SecondaryVideoStream struct {
-	PrimaryStream
-	ExtraAttributes SecondaryStream
-	PGStream        SecondaryStream
-}
-
-// StreamEntry holds the information for the data stream
-type StreamEntry struct {
-	Len       byte
-	Type      byte
-	PID       uint16
-	SubPathID byte
-	SubClipID byte
-}
-
-// StreamAttributes holds metadata about the data stream
-type StreamAttributes struct {
-	Len           byte
-	Encoding      byte
-	Format        byte
-	Rate          byte
-	CharacterCode byte
-	Language      string
-}
-
-// CLPI contains the fiLename and the codec ID
-type CLPI struct {
-	ClipFile string
-	ClipID   string // M2TS
-	STCID    byte
-}
-
-type SubPath struct {
-	Len           int
-	Type          byte
-	PlayItemCount byte
-	Flags         uint16
-	SubPlayItems  []SubPlayItem
-}
-
-// SubPlayItem contains information about a PlayItem in the subpath
-type SubPlayItem struct {
-	Len              uint16
-	Flags            byte // multiangle/connection condition
-	StartOfPlayitem  uint32
-	InTime           int
-	OutTime          int
-	UOMask           uint64
-	RandomAccessFlag byte
-	AngleCount       byte
-	AngleFlags       byte
-	StillMode        byte
-	StillTime        uint16
-	PlayItemID       uint16
-	Clpi             CLPI
-	Angles           []CLPI
-	StreamTable      STNTable
-}
-
-type PlaylistMark struct {
-	Len       uint64
-	MarkCount uint16
-	Marks     []Mark
-}
-
-type Mark struct {
-	Type        byte
-	PlayItemRef uint16
-	Time        uint32
-	PID         uint16
-	Duration    uint32
-}
 
 type errReader struct {
 	RS  *bytes.Reader
@@ -331,36 +38,6 @@ func (er *errReader) Seek(offset int64, whence int) (int64, error) {
 	return n64, er.err
 }
 
-func main() {
-	var (
-		file io.Reader
-		Mpls MPLS
-		err  error
-	)
-	file, err = os.Open(filepath.Clean(os.Args[1]))
-	if err != nil {
-		panic(err)
-	}
-	twriter = tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
-	write = func(name string, v interface{}, bin []byte) {
-		fmt.Fprintf(twriter, "name: %s\tint: %d\tBinary: %08b\tHex: % X\n", name, v, bin, bin)
-	}
-	empty = func() {
-		fmt.Fprintf(twriter, "\t\t\t\n")
-	}
-
-	Mpls, err = Parse(file)
-	twriter.Flush()
-	fmt.Println(Mpls)
-	panic(err)
-}
-
-var (
-	twriter *tabwriter.Writer
-	write   func(string, interface{}, []byte)
-	empty   func()
-)
-
 // Parse parses an MPLS file into an MPLS struct
 func Parse(reader io.Reader) (mpls MPLS, err error) {
 	var (
@@ -379,17 +56,16 @@ func Parse(reader io.Reader) (mpls MPLS, err error) {
 // Parse reads MPLS data from an io.ReadSeeker
 func (mpls *MPLS) Parse(file []byte) error {
 	var (
-		buf [10]byte
-		n   int
-		err error
+		buf   [10]byte
+		n     int
+		err   error
+		start int64
 	)
 
 	reader := &errReader{
 		RS:  bytes.NewReader(file),
 		err: nil,
 	}
-
-	fmt.Fprintln(twriter, "Parsing MPLS file\n")
 
 	n, err = reader.Read(buf[:8])
 	if err != nil || n != 8 {
@@ -405,25 +81,30 @@ func (mpls *MPLS) Parse(file []byte) error {
 
 	mpls.FileType = str[:4]
 	mpls.Version = str[4:8]
-	write("FileType", mpls.FileType, buf[:4])
-	write("Version", mpls.Version, buf[4:8])
 
 	mpls.PlaylistStart, _ = readInt32(reader, buf[:])
-	write("Playlist Start", mpls.PlaylistStart, buf[:4])
 
 	mpls.PlaylistMarkStart, _ = readInt32(reader, buf[:])
-	write("Playlist Mark Start", mpls.PlaylistMarkStart, buf[:4])
 
 	mpls.ExtensionDataStart, _ = readInt32(reader, buf[:])
-	write("Extension Data Start", mpls.ExtensionDataStart, buf[:4])
 
 	_, _ = reader.Seek(20, io.SeekCurrent)
 
 	_ = mpls.AppInfoPlaylist.parse(reader)
 
-	_, _ = reader.Seek(int64(mpls.PlaylistStart), io.SeekStart)
+	start, _ = reader.Seek(0, io.SeekCurrent)
+	if start != int64(mpls.PlaylistStart) {
+		fmt.Fprintf(os.Stderr, "Playlist doesn't start at the right place. Current position is %d position should be %d\n", start, int64(mpls.PlaylistStart))
+	}
 
+	_, _ = reader.Seek(int64(mpls.PlaylistStart), io.SeekStart)
 	_ = mpls.Playlist.parse(reader)
+
+	start, _ = reader.Seek(0, io.SeekCurrent)
+	if start != int64(mpls.PlaylistMarkStart) {
+		fmt.Fprintf(os.Stderr, "Mark Playlist doesn't start at the right place. Current position is %d position should be %d\n", start, int64(mpls.PlaylistStart))
+	}
+
 	// _ = mpls.MarkPlaylist.parse(reader)
 
 	return reader.err
@@ -432,27 +113,29 @@ func (mpls *MPLS) Parse(file []byte) error {
 // parse reads AppInfoPlaylist data from an *errReader
 func (aip *AppInfoPlaylist) parse(reader *errReader) error {
 	var (
-		buf [10]byte
+		buf   [10]byte
+		start int64
+		end   int64
 	)
 
-	fmt.Fprintln(twriter, "\nParsing App Info Playlist\n")
-
 	aip.Len, _ = readInt32(reader, buf[:])
-	write("Length", aip.Len, buf[:4])
 
-	_, _ = reader.Read(buf[:1])
+	start, _ = reader.Seek(0, io.SeekCurrent)
+
+	_, _ = reader.Read(buf[:2])
 
 	aip.PlaybackType = buf[1]
-	write("Playback Type", aip.PlaybackType, buf[:1])
 
 	aip.PlaybackCount, _ = readUInt16(reader, buf[:])
-	write("Playback Count", aip.PlaybackCount, buf[:2])
 
 	aip.UOMask, _ = readUInt64(reader, buf[:])
-	write("UO Mask", aip.UOMask, buf[:8])
 
 	aip.PlaylistFlags, _ = readUInt16(reader, buf[:])
-	write("Flags", aip.PlaylistFlags, buf[:2])
+
+	end, _ = reader.Seek(0, io.SeekCurrent)
+	if end != (start + int64(aip.Len)) {
+		fmt.Fprintf(os.Stderr, "App Info Playlist is not aligned. App Info Playlist started at %d current position is %d position should be %d\n", start, end, start+int64(aip.Len))
+	}
 
 	return reader.err
 }
@@ -460,22 +143,21 @@ func (aip *AppInfoPlaylist) parse(reader *errReader) error {
 // parse reads Playlist data from an *errReader
 func (p *Playlist) parse(reader *errReader) error {
 	var (
-		buf [10]byte
-		err error
+		buf   [10]byte
+		err   error
+		start int64
+		end   int64
 	)
 
-	fmt.Fprintln(twriter, "\nParsing Playlist\n")
-
 	p.Len, _ = readInt32(reader, buf[:])
-	write("Length", p.Len, buf[:4])
+
+	start, _ = reader.Seek(0, io.SeekCurrent)
 
 	_, _ = reader.Seek(2, io.SeekCurrent)
 
 	p.PlayItemCount, _ = readUInt16(reader, buf[:])
-	write("Play Item Count", p.PlayItemCount, buf[:2])
 
 	p.SubPathCount, _ = readUInt16(reader, buf[:])
-	write("Sub Path Count", p.SubPathCount, buf[:2])
 
 	for i := 0; i < int(p.PlayItemCount); i++ {
 		var item PlayItem
@@ -495,20 +177,26 @@ func (p *Playlist) parse(reader *errReader) error {
 		p.SubPaths = append(p.SubPaths, item)
 	}
 
+	end, _ = reader.Seek(0, io.SeekCurrent)
+	if end != (start + int64(p.Len)) {
+		fmt.Fprintf(os.Stderr, "Playlist is not aligned. Playlist started at %d current position is %d position should be %d\n", start, end, start+int64(p.Len))
+	}
+
 	return reader.err
 }
 
 // parse reads PlayItem data from an *errReader
 func (pi *PlayItem) parse(reader *errReader) error {
 	var (
-		buf [10]byte
-		err error
+		buf   [10]byte
+		err   error
+		start int64
+		end   int64
 	)
 
-	fmt.Fprintln(twriter, "\nParsing Play Item\n")
-
 	pi.Len, _ = readUInt16(reader, buf[:])
-	write("length", pi.Len, buf[:2])
+
+	start, _ = reader.Seek(0, io.SeekCurrent)
 
 	_, _ = reader.Read(buf[:9])
 
@@ -519,45 +207,32 @@ func (pi *PlayItem) parse(reader *errReader) error {
 	pi.Clpi.ClipFile = str[:5]
 	pi.Clpi.ClipID = str[5:9]
 
-	write("Clip ID", pi.Clpi.ClipFile, buf[:5])
-	write("Clip Type", pi.Clpi.ClipID, buf[5:9])
-
 	pi.Flags, _ = readUInt16(reader, buf[:])
-	write("Flags", pi.Flags, buf[:2])
 
 	_, _ = reader.Read(buf[:1])
 
 	pi.Clpi.STCID = buf[0]
-	write("STC ID", pi.Clpi.STCID, buf[:1])
 
 	pi.InTime, _ = readInt32(reader, buf[:])
-	write("Start Time", pi.InTime, buf[:4])
 
 	pi.OutTime, _ = readInt32(reader, buf[:])
-	write("End Time", pi.OutTime, buf[:4])
 
 	pi.UOMask, _ = readUInt64(reader, buf[:])
-	write("UO Mask", pi.UOMask, buf[:8])
 
 	_, _ = reader.Read(buf[:2])
 
 	pi.RandomAccessFlag = buf[0]
-	write("Random Access Flag", pi.RandomAccessFlag, buf[:1])
 
 	pi.StillMode = buf[1]
-	write("Still Mode", pi.StillMode, buf[1:2])
 
 	pi.StillTime, _ = readUInt16(reader, buf[:])
-	write("Still Time", pi.StillTime, buf[:2])
 
 	if pi.Flags&1<<3 == 1 {
 		_, _ = reader.Read(buf[:2])
 
 		pi.AngleCount = buf[0]
-		write("Angle Count", pi.AngleCount, buf[:1])
 
 		pi.AngleFlags = buf[1]
-		write("Angle Flags", pi.AngleFlags, buf[1:2])
 
 		for i := 0; i < int(pi.AngleCount); i++ {
 			var angle CLPI
@@ -567,12 +242,16 @@ func (pi *PlayItem) parse(reader *errReader) error {
 				return err
 			}
 			angle.STCID = buf[0]
-			write("STC ID", angle.STCID, buf[:1])
 			pi.Angles = append(pi.Angles, angle)
 		}
 	}
 
 	_ = pi.StreamTable.parse(reader)
+
+	end, _ = reader.Seek(0, io.SeekCurrent)
+	if end != (start + int64(pi.Len)) {
+		fmt.Fprintf(os.Stderr, "playitem is not aligned. Playitem started at %d current position is %d position should be %d\n", start, end, start+int64(pi.Len))
+	}
 
 	return reader.err
 }
@@ -587,8 +266,6 @@ func (clpi *CLPI) parse(reader *errReader) error {
 	str := string(buf[:9])
 	clpi.ClipFile = str[:5]
 	clpi.ClipID = str[5:9]
-	write("Clip ID", clpi.ClipFile, buf[:5])
-	write("Clip Type", clpi.ClipID, buf[5:9])
 
 	// clpi.STCID = buf[9]
 	return reader.err
@@ -597,35 +274,29 @@ func (clpi *CLPI) parse(reader *errReader) error {
 // parse reads PrimaryStream data from an *errReader
 func (stnt *STNTable) parse(reader *errReader) error {
 	var (
-		buf [10]byte
-		err error
+		buf   [10]byte
+		err   error
+		start int64
+		end   int64
 	)
-	fmt.Fprintln(twriter, "\nParsing Stream Table\n")
 	stnt.Len, _ = readUInt16(reader, buf[:])
-	write("Length", stnt.Len, buf[:2])
+
+	start, _ = reader.Seek(0, io.SeekCurrent)
 
 	_, _ = reader.Read(buf[:9])
 
 	stnt.PrimaryVideoStreamCount = buf[2]
-	write("Primary Video Count", stnt.PrimaryVideoStreamCount, buf[1:2])
 	stnt.PrimaryAudioStreamCount = buf[3]
-	write("Primary Audio Count", stnt.PrimaryAudioStreamCount, buf[2:3])
 	stnt.PrimaryPGStreamCount = buf[4]
-	write("Primary PG Count", stnt.PrimaryPGStreamCount, buf[3:4])
 	stnt.PrimaryIGStreamCount = buf[5]
-	write("Primary IG Count", stnt.PrimaryIGStreamCount, buf[4:5])
 	stnt.SecondaryAudioStreamCount = buf[6]
-	write("Secondary Audio Count", stnt.SecondaryAudioStreamCount, buf[5:6])
 	stnt.SecondaryVideoStreamCount = buf[7]
-	write("Secondary Video Count", stnt.SecondaryVideoStreamCount, buf[6:7])
 	stnt.PIPPGStreamCount = buf[8]
-	write("PIP PG Count", stnt.PIPPGStreamCount, buf[7:8])
 
 	_, _ = reader.Seek(5, io.SeekCurrent)
 
 	for i := 0; i < int(stnt.PrimaryVideoStreamCount); i++ {
 		var stream PrimaryStream
-		fmt.Fprintln(twriter, "\nParsing Video Stream\n")
 		err = stream.parse(reader)
 		if err != nil {
 			return err
@@ -635,7 +306,6 @@ func (stnt *STNTable) parse(reader *errReader) error {
 
 	for i := 0; i < int(stnt.PrimaryAudioStreamCount); i++ {
 		var stream PrimaryStream
-		fmt.Fprintln(twriter, "\nParsing Audio Stream\n")
 		err = stream.parse(reader)
 		if err != nil {
 			return err
@@ -645,7 +315,6 @@ func (stnt *STNTable) parse(reader *errReader) error {
 
 	for i := 0; i < int(stnt.PrimaryPGStreamCount); i++ {
 		var stream PrimaryStream
-		fmt.Fprintln(twriter, "\nParsing PG Stream\n")
 		err = stream.parse(reader)
 		if err != nil {
 			return err
@@ -655,7 +324,6 @@ func (stnt *STNTable) parse(reader *errReader) error {
 
 	for i := 0; i < int(stnt.PrimaryIGStreamCount); i++ {
 		var stream PrimaryStream
-		fmt.Fprintln(twriter, "\nParsing IG Stream\n")
 		err = stream.parse(reader)
 		if err != nil {
 			return err
@@ -665,7 +333,6 @@ func (stnt *STNTable) parse(reader *errReader) error {
 
 	for i := 0; i < int(stnt.SecondaryAudioStreamCount); i++ {
 		var stream SecondaryAudioStream
-		fmt.Fprintln(twriter, "\nParsing Audio Stream\n")
 		err = stream.parse(reader)
 		if err != nil {
 			return err
@@ -675,12 +342,16 @@ func (stnt *STNTable) parse(reader *errReader) error {
 
 	for i := 0; i < int(stnt.SecondaryVideoStreamCount); i++ {
 		var stream SecondaryVideoStream
-		fmt.Fprintln(twriter, "\nParsing Video Stream\n")
 		err = stream.parse(reader)
 		if err != nil {
 			return err
 		}
 		stnt.SecondaryVideoStreams = append(stnt.SecondaryVideoStreams, stream)
+	}
+
+	end, _ = reader.Seek(0, io.SeekCurrent)
+	if end != (start + int64(stnt.Len)) {
+		fmt.Fprintf(os.Stderr, "STN Table is not aligned. STN Table started at %d current position is %d position should be %d\n", start, end, start+int64(stnt.Len))
 	}
 
 	return reader.err
@@ -692,17 +363,13 @@ func (ss *SecondaryStream) parse(reader *errReader) error {
 		buf [10]byte
 	)
 
-	fmt.Fprintln(twriter, "\nParsing Secondary Stream\n")
-
 	_, _ = reader.Read(buf[:2])
 	ss.RefrenceEntryCount = buf[0]
-	write("Reference Entry Count", ss.RefrenceEntryCount, buf[:1])
 	ss.StreamIDs = make([]byte, ss.RefrenceEntryCount)
 	_, _ = reader.Read(ss.StreamIDs)
 	if ss.RefrenceEntryCount%2 != 0 {
 		_, _ = reader.Seek(1, io.SeekCurrent)
 	}
-	write("Stream IDs", ss.StreamIDs, ss.StreamIDs)
 	return reader.err
 }
 
@@ -736,31 +403,34 @@ func (ps *PrimaryStream) parse(reader *errReader) error {
 // parse reads Stream data from an *errReader
 func (se *StreamEntry) parse(reader *errReader) error {
 	var (
-		buf [10]byte
+		buf   [10]byte
+		start int64
+		end   int64
 	)
 
-	_, _ = reader.Read(buf[:])
+	_, _ = reader.Read(buf[:1])
 
 	se.Len = buf[0]
-	write("Length", se.Len, buf[:1])
-	se.Type = buf[1]
-	write("Type", se.Type, buf[1:2])
+
+	start, _ = reader.Seek(0, io.SeekCurrent)
+
+	_, _ = reader.Read(buf[:9])
+	se.Type = buf[0]
 	switch se.Type {
 	case 1:
-		se.PID = binary.BigEndian.Uint16(buf[2:4])
-		write("PID", se.PID, buf[2:4])
+		se.PID = binary.BigEndian.Uint16(buf[1:3])
 	case 2, 4:
-		se.SubPathID = buf[2]
-		write("Sub Path ID", se.SubPathID, buf[2:3])
-		se.SubClipID = buf[3]
-		write("Sub Clip ID", se.SubClipID, buf[3:4])
-		se.PID = binary.BigEndian.Uint16(buf[4:6])
-		write("PID", se.PID, buf[2:4])
-	case 3:
-		se.SubPathID = buf[2]
-		write("Sub Path ID", se.SubPathID, buf[2:3])
+		se.SubPathID = buf[1]
+		se.SubClipID = buf[2]
 		se.PID = binary.BigEndian.Uint16(buf[3:5])
-		write("PID", se.PID, buf[2:4])
+	case 3:
+		se.SubPathID = buf[1]
+		se.PID = binary.BigEndian.Uint16(buf[2:4])
+	}
+
+	end, _ = reader.Seek(0, io.SeekCurrent)
+	if end != (start + int64(se.Len)) {
+		fmt.Fprintf(os.Stderr, "Stream Entry is not aligned. Stream Entry started at %d current position is %d position should be %d\n", start, end, start+int64(se.Len))
 	}
 
 	return reader.err
@@ -769,16 +439,20 @@ func (se *StreamEntry) parse(reader *errReader) error {
 // parse reads Stream data from an *errReader
 func (sa *StreamAttributes) parse(reader *errReader) error {
 	var (
-		buf [10]byte
+		buf   [10]byte
+		start int64
+		end   int64
 	)
-	empty()
-	_, _ = reader.Read(buf[:2])
+
+	_, _ = reader.Read(buf[:1])
 
 	sa.Len = buf[0]
-	sa.Encoding = buf[1]
 
-	write("Length", sa.Len, buf[:1])
-	write("Encoding", sa.Encoding, buf[1:2])
+	start, _ = reader.Seek(0, io.SeekCurrent)
+
+	_, _ = reader.Read(buf[:1])
+
+	sa.Encoding = buf[0]
 
 	switch sa.Encoding {
 	case VTMPEG1Video, VTMPEG2Video, VTVC1, VTH264:
@@ -786,8 +460,6 @@ func (sa *StreamAttributes) parse(reader *errReader) error {
 
 		sa.Format = buf[0] & 0xf0 >> 4
 		sa.Rate = buf[0] & 0x0F
-		write("Format", sa.Format, buf[:1])
-		write("Rate", sa.Rate, buf[:1])
 		_, _ = reader.Seek(3, io.SeekCurrent)
 
 	case ATMPEG1Audio, ATMPEG2Audio, ATLPCM, ATAC3, ATDTS, ATTRUEHD, ATAC3Plus, ATDTSHD, ATDTSHDMaster:
@@ -796,15 +468,11 @@ func (sa *StreamAttributes) parse(reader *errReader) error {
 		sa.Format = buf[0] & 0xf0 >> 4
 		sa.Rate = buf[0] & 0x0F
 		sa.Language = string(buf[1:4])
-		write("Format", sa.Format, buf[:1])
-		write("Rate", sa.Rate, buf[:1])
-		write("Language", sa.Language, buf[1:4])
 
 	case PresentationGraphics, InteractiveGraphics:
 		_, _ = reader.Read(buf[:3])
 
 		sa.Language = string(buf[:3])
-		write("Language", sa.Language, buf[1:4])
 		_, _ = reader.Seek(1, io.SeekCurrent)
 
 	case TextSubtitle:
@@ -812,10 +480,13 @@ func (sa *StreamAttributes) parse(reader *errReader) error {
 
 		sa.CharacterCode = buf[0]
 		sa.Language = string(buf[1:4])
-		write("Character Code", sa.CharacterCode, buf[:1])
-		write("Language", sa.Language, buf[1:4])
 	default:
 		fmt.Fprintf(os.Stderr, "warning: unrecognized encoding: '%02X'\n", sa.Encoding)
+	}
+
+	end, _ = reader.Seek(0, io.SeekCurrent)
+	if end != (start + int64(sa.Len)) {
+		fmt.Fprintf(os.Stderr, "Stream Attributes is not aligned. Stream Attributes started at %d current position is %d position should be %d\n", start, end, start+int64(sa.Len))
 	}
 
 	return reader.err
@@ -823,24 +494,22 @@ func (sa *StreamAttributes) parse(reader *errReader) error {
 
 func (sp *SubPath) parse(reader *errReader) error {
 	var (
-		buf [10]byte
-		err error
+		buf   [10]byte
+		err   error
+		start int64
+		end   int64
 	)
 
-	fmt.Fprintln(twriter, "\nParsing Sub Path\n")
-
 	sp.Len, _ = readInt32(reader, buf[:])
-	write("Length", sp.Len, buf[:4])
 
-	_, _ = reader.Read(buf[:1])
-	sp.Type = buf[0]
-	write("Type", sp.Type, buf[:1])
+	start, _ = reader.Seek(0, io.SeekCurrent)
+
+	_, _ = reader.Read(buf[:2])
+	sp.Type = buf[1]
 	sp.Flags, _ = readUInt16(reader, buf[:])
-	write("Flags", sp.Flags, buf[:2])
 
 	_, _ = reader.Read(buf[:2])
 	sp.PlayItemCount = buf[1]
-	write("Play Item Count", sp.PlayItemCount, buf[:1])
 
 	for i := 0; i < int(sp.PlayItemCount); i++ {
 		var item SubPlayItem
@@ -851,46 +520,44 @@ func (sp *SubPath) parse(reader *errReader) error {
 		sp.SubPlayItems = append(sp.SubPlayItems, item)
 	}
 
+	end, _ = reader.Seek(0, io.SeekCurrent)
+	if end != (start + int64(sp.Len)) {
+		fmt.Fprintf(os.Stderr, "Subpath is not aligned. Subpath started at %d current position is %d position should be %d\n", start, end, start+int64(sp.Len))
+	}
+
 	return reader.err
 }
 
 func (spi *SubPlayItem) parse(reader *errReader) error {
 	var (
-		buf [10]byte
-		err error
+		buf   [10]byte
+		err   error
+		start int64
+		end   int64
 	)
 
-	fmt.Fprintln(twriter, "\nParsing Play Item\n")
-
 	spi.Len, _ = readUInt16(reader, buf[:])
-	write("Length", spi.Len, buf[:2])
+
+	start, _ = reader.Seek(0, io.SeekCurrent)
 
 	_ = spi.Clpi.parse(reader)
 
 	_, _ = reader.Read(buf[:4])
 
 	spi.Flags = buf[2]
-	write("Flags", spi.Flags, buf[:2])
 	spi.Clpi.STCID = buf[3]
-	write("STC ID", spi.Clpi.STCID, buf[2:3])
 
 	spi.InTime, _ = readInt32(reader, buf[:])
-	write("Start Time", spi.InTime, buf[:4])
 	spi.OutTime, _ = readInt32(reader, buf[:])
-	write("End Time", spi.OutTime, buf[:4])
 
 	spi.PlayItemID, _ = readUInt16(reader, buf[:])
-	write("Play Item ID", spi.PlayItemID, buf[:2])
 	spi.StartOfPlayitem, _ = readUInt32(reader, buf[:])
-	write("Start Of Play Item", spi.StartOfPlayitem, buf[:4])
 
 	if spi.Flags&1<<3 == 1 {
 		_, _ = reader.Read(buf[:2])
 
 		spi.AngleCount = buf[0]
 		spi.AngleFlags = buf[1]
-		write("Angle Count", spi.AngleCount, buf[:1])
-		write("Angle Flags", spi.AngleFlags, buf[1:2])
 
 		for i := 0; i < int(spi.AngleCount); i++ {
 			var angle CLPI
@@ -900,9 +567,13 @@ func (spi *SubPlayItem) parse(reader *errReader) error {
 				return err
 			}
 			angle.STCID = buf[0]
-			write("STC ID", angle.STCID, buf[2:3])
 			spi.Angles = append(spi.Angles, angle)
 		}
+	}
+
+	end, _ = reader.Seek(0, io.SeekCurrent)
+	if end != (start + int64(spi.Len)) {
+		fmt.Fprintf(os.Stderr, "Subplayitem is not aligned. Subplayitem started at %d current position is %d position should be %d\n", start, end, start+int64(spi.Len))
 	}
 
 	return reader.err
