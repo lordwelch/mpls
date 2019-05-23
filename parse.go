@@ -106,7 +106,12 @@ func (mpls *MPLS) Parse(file []byte) error {
 	}
 
 	// _ = mpls.MarkPlaylist.parse(reader)
-
+	mpls.SegmentMap = make([]string, 0, len(mpls.Playlist.PlayItems))
+	for _, playitem := range mpls.Playlist.PlayItems {
+		mpls.SegmentMap = append(mpls.SegmentMap, playitem.Clpi.ClipFile)
+		mpls.Duration += int64(playitem.OutTime - playitem.InTime)
+	}
+	mpls.Duration = mpls.Duration / 4500
 	return reader.err
 }
 

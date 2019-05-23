@@ -143,6 +143,8 @@ type MPLS struct {
 	AppInfoPlaylist    AppInfoPlaylist
 	Playlist           Playlist
 	MarkPlaylist       PlaylistMark
+	SegmentMap         []string
+	Duration           int64
 }
 
 // AppInfoPlaylist sucks
@@ -154,7 +156,6 @@ type AppInfoPlaylist struct {
 	UOMask        uint64
 }
 
-// Playlist sucks
 type Playlist struct {
 	Len           int
 	PlayItemCount uint16
